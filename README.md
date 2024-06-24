@@ -1,6 +1,8 @@
 # S1Floods.Explorer
 
-This application is designed as a part of a data science visualization project aimed at enhancing the visualization and knowledge surrounding the project S1Floods.AT, where TU Wien is a partner.
+This application is designed as part of a data science visualization project aimed at enhancing the visualization and knowledge surrounding the project S1Floods.AT, which TU Wien is a partner in.  
+This repository only includes the code, as the data is private.  
+However, data in the right format (check the README) can be included in the media/Data folder to test the program.
 
 ## Description
 
