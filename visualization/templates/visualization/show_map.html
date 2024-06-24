@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Flood Data Map Viewer</title>
+        <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+        <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css" />
+        <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css" />
+        <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+        <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+        <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
+        <style>
+            body, html { height: 100%; margin: 0; padding: 0; }
+            #mapid { height: 100%; width: 100%; }
+            #controls {
+                position: absolute;
+                left: 50px;
+                z-index: 1000;
+                background: rgba(255, 255, 255, 0.8);
+                padding: 10px;
+                width: 150px;
+            }
+            #toggleMap {
+                position: absolute;
+                right: 10px;
+                top: 10px;
+                z-index: 1001;
+                background-color: grey;
+                color: white;
+            }
+            .leaflet-popup-content {
+                font-size: 16px;
+                color: darkblue;
+            }
+        </style>
+    </head>
+<body>
+    <div id="controls">
+        Event: <select id="event" onchange="updateDateOptions();">
+            <option value="" selected>Select an event</option>
+            {% for event in events %}
+            <option value="{{ event }}">{{ event }}</option>
+            {% endfor %}
+        </select>
+        Date: <input type="range" id="dateSlider" min="0" max="100" value="0" oninput="updateDateDisplay();">
+        <span id="dateDisplay"></span>
+        Layer:
+        <div>
+            <input type="checkbox" id="VV_flood" name="layer" value="VV_flood">
+            <label for="VV_flood">VV Flood</label><br>
+            <input type="checkbox" id="VV_increased" name="layer" value="VV_increased">
+            <label for="VV_increased">VV Increased</label><br>
+            <input type="checkbox" id="VH_flood" name="layer" value="VH_flood">
+            <label for="VH_flood">VH Flood</label>
+        </div>
+    </div>
+    <button id="toggleMap">Switch to Aerial View</button>
+    <div id="mapid"></div>
+
+    <script>
+        var map = L.map('mapid').setView([47.87610175516378, 14.154102764519854], 8);
+    
+        // Tile layers
+        var standardTiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 18,
+        }).addTo(map);
+        var aerialTiles = L.tileLayer('http://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+            maxZoom: 18,
+            subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+        });
+    
+        // Marker and polygon layers
+        var markers = L.markerClusterGroup({
+            spiderfyOnMaxZoom: false,
+            showCoverageOnHover: true,
+            zoomToBoundsOnClick: true
+        });
+        map.addLayer(markers);
+        var polygonsLayer = L.layerGroup().addTo(map);
+    
+        var dateArray = [];
+        var allData = {}; // Object to store all data points indexed by date
+    
+        loadBorders();
+    
+        $('#toggleMap').click(function() {
+            toggleMapView();
+        });
+    
+        $('#event').change(function() {
+            updateDateOptions();
+        });
+    
+        // Update markers on slider input and layer checkbox changes
+        $('#dateSlider').on('input', function() {
+            updateDateDisplay();
+            loadData();
+        });
+    
+        $('input[name="layer"]').change(function() {
+            loadData();
+        });
+    
+        function loadBorders() {
+            var bordersData = 'media/Data/Border/austria_with_regions_.geojson';
+            $.getJSON(bordersData, function(data) {
+                L.geoJSON(data, { style: styleBorders }).addTo(map);
+            });
+        }
+    
+        function styleBorders(feature) {
+            return feature.properties.name === "Austria" ? {
+                color: "red", weight: 5, opacity: 0.8, fill: false
+            } : {
+                color: "blue", weight: 2, opacity: 0.6, fill: false
+            };
+        }
+    
+        function updateDateOptions() {
+            var event = $('#event').val();
+            $.ajax({
+                url: '/get_all_data/',
+                data: { 'event': event },
+                success: function(data) {
+                    allData = data; // Store all data by date
+                    dateArray = Object.keys(data).sort();
+                    $('#dateSlider').attr({
+                        'max': dateArray.length - 1,
+                        'min': 0,
+                        'value': 0
+                    });
+                    updateDateDisplay();
+                    loadData();
+                },
+                error: function() {
+                    alert('Could not load data for the selected event');
+                    $('#dateDisplay').text("Failed to load dates");
+                }
+            });
+        }
+    
+        function loadData() {
+            var sliderValue = $('#dateSlider').val();
+            updateMarkers(sliderValue);
+        }
+    
+        function updateMarkers(sliderValue) {
+            var dateKey = dateArray[sliderValue];
+            var checkedLayers = $('input[name="layer"]:checked').map(function() {
+                return this.value;
+            }).get();
+    
+            markers.clearLayers();
+            var features = allData[dateKey].filter(feature => checkedLayers.includes(feature.properties.layer));
+    
+            if (features.length > 0) {
+                var geoJsonLayer = L.geoJSON(features, {
+                    onEachFeature: function(feature, layerObj) {
+                        bindPopupAndStyle(feature, layerObj);
+                    }
+                });
+                markers.addLayer(geoJsonLayer);
+            } else {
+                console.log('No features to display for this date or layers');
+            }
+        }
+    
+        function bindPopupAndStyle(feature, layerObj) {
+            var area = turf.area(feature);
+            var areaInHectares = area / 10000;
+            var popupContent = `<br>area: ${areaInHectares.toFixed(2)} hectares<br>`;
+            Object.keys(feature.properties).forEach(function(key) {
+                if (key !== 'datetime_1') {
+                    popupContent += `${key}: ${feature.properties[key]}<br>`;
+                }
+            });
+            layerObj.bindPopup(popupContent);
+            var color = { 'VV_flood': 'red', 'VV_increased': 'blue', 'VH_flood': 'green' }[feature.properties.layer];
+            layerObj.setStyle({ color: color });
+        }
+    
+        function toggleMapView() {
+            if (map.hasLayer(standardTiles)) {
+                map.removeLayer(standardTiles);
+                map.addLayer(aerialTiles);
+                $('#toggleMap').text('Switch to Standard View');
+            } else {
+                map.removeLayer(aerialTiles);
+                map.addLayer(standardTiles);
+                $('#toggleMap').text('Switch to Aerial View');
+            }
+        }
+    
+        function updateDateDisplay() {
+            var sliderValue = $('#dateSlider').val();
+            var dateStr = dateArray[sliderValue];
+            var formattedDate = formatDateToDisplay(dateStr);
+            $('#dateDisplay').text(formattedDate);
+        }
+    
+        function formatDateToDisplay(dateStr) {
+            return !dateStr ? "Invalid date" :
+                dateStr.substring(6, 8) + '.' + dateStr.substring(4, 6) + '.' + dateStr.substring(0, 4);
+        }
+    
+        // Add a legend
+        var legend = L.control({ position: 'bottomright' });
+        legend.onAdd = function(map) {
+            var div = L.DomUtil.create('div', 'info legend');
+            div.innerHTML += '<i style="background: red; width: 18px; height: 18px; display: inline-block; margin-right: 8px; opacity: 0.7;"></i> VV Flood<br>';
+            div.innerHTML += '<i style="background: blue; width: 18px; height: 18px; display: inline-block; margin-right: 8px; opacity: 0.7;"></i> VV Increased<br>';
+            div.innerHTML += '<i style="background: green; width: 18px; height: 18px; display: inline-block; margin-right: 8px; opacity: 0.7;"></i> VH Flood<br>';
+            return div;
+        };
+        legend.addTo(map);
+    </script>
+    
+    
+    
+</body>
+</html>
